@@ -1,41 +1,48 @@
 """
-server/app.py -- FastAPI HTTP server.
+server/app.py -- FastAPI HTTP server for the Traffic Flow OpenEnv environment.
 
-Endpoints required by the hackathon validator:
-  GET  /health         health check
-  POST /reset          start new episode
-  POST /step           apply action, return observation + reward
-  GET  /state          episode metadata
-  GET  /tasks          list all tasks with descriptions  <-- REQUIRED by validator
-  POST /grader         grade a full episode for a task   <-- REQUIRED by validator
-  GET  /baseline       run heuristic on all 3 tasks      <-- REQUIRED by validator
+Standard OpenEnv endpoints:
+  GET  /health   -- health check
+  POST /reset    -- start new episode
+  POST /step     -- apply action, return observation + reward
+  GET  /state    -- episode metadata
+
+Grader endpoints (one per task, declared in openenv.yaml):
+  GET  /grade/easy    -- run grader for easy task, return score 0.0-1.0
+  GET  /grade/medium  -- run grader for medium task, return score 0.0-1.0
+  GET  /grade/hard    -- run grader for hard task, return score 0.0-1.0
+
+Discovery endpoints:
+  GET  /tasks    -- list all tasks
+  GET  /baseline -- run all 3 graders, return reproducible scores
 """
 
 import os
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from typing import Optional
+from fastapi import FastAPI, HTTPException
 
 try:
     from ..models import TrafficAction, TrafficObservation, TrafficState
     from .traffic_environment import TrafficEnvironment
-    from .graders import grade_easy, grade_medium, grade_hard, heuristic_policy, run_episode
+    from .graders import (
+        grade_easy, grade_medium, grade_hard,
+        heuristic_policy,
+    )
 except ImportError:
     from models import TrafficAction, TrafficObservation, TrafficState
     from server.traffic_environment import TrafficEnvironment
-    from server.graders import grade_easy, grade_medium, grade_hard, heuristic_policy, run_episode
+    from server.graders import (
+        grade_easy, grade_medium, grade_hard,
+        heuristic_policy,
+    )
 
 TASK_LEVEL = os.environ.get("TASK_LEVEL", "easy")
 env = TrafficEnvironment(task_level=TASK_LEVEL)
 
 app = FastAPI(
     title="Smart City Traffic Flow -- OpenEnv",
-    description=(
-        "RL environment for adaptive traffic signal control. "
-        "Agent controls signal phases to minimise vehicle wait time and "
-        "maximise throughput across urban intersections."
-    ),
+    description="RL environment for adaptive traffic signal control.",
     version="1.0.0",
 )
 
@@ -44,13 +51,11 @@ app = FastAPI(
 
 @app.get("/health")
 def health():
-    """Health check -- openenv validate calls this first."""
     return {"status": "healthy", "task_level": TASK_LEVEL}
 
 
 @app.post("/reset", response_model=TrafficObservation)
 def reset(seed: Optional[int] = None):
-    """Start a fresh episode. Pass ?seed=42 for reproducibility."""
     try:
         return env.reset(seed=seed)
     except Exception as e:
@@ -59,11 +64,6 @@ def reset(seed: Optional[int] = None):
 
 @app.post("/step", response_model=TrafficObservation)
 def step(action: TrafficAction):
-    """
-    Apply one action, advance simulation 5 seconds, return obs + reward.
-
-    Body: {"action_type": "extend_green", "intersection_id": 0}
-    """
     try:
         return env.step(action)
     except Exception as e:
@@ -72,137 +72,124 @@ def step(action: TrafficAction):
 
 @app.get("/state", response_model=TrafficState)
 def state():
-    """Return episode metadata (step count, cumulative reward, etc.)"""
     try:
         return env.state
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Grader endpoints (REQUIRED by hackathon validator) ─────────────────────
+# ── Per-task grader endpoints (declared in openenv.yaml grader.path) ───────
+# The validator reads openenv.yaml, finds grader.path for each task,
+# then calls that path and expects {"score": float} in the response.
+# Each endpoint runs the grader and returns the result immediately.
+
+@app.get("/grade/easy")
+def grade_task_easy():
+    """
+    Grader for the easy task (single intersection).
+    Returns normalised score: 0.0 = random policy, 1.0 = heuristic oracle.
+    Uses 3 seeds for speed. Full evaluation uses 5.
+    """
+    try:
+        score = grade_easy(policy=heuristic_policy, n_seeds=3)
+        return {
+            "task_id": "easy",
+            "score": round(score, 4),
+            "min": 0.0,
+            "max": 1.0,
+            "description": "Single intersection, 4 lanes, steady arrival rate",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grade/medium")
+def grade_task_medium():
+    """
+    Grader for the medium task (3-intersection corridor).
+    Returns normalised score: 0.0 = random policy, 1.0 = heuristic oracle.
+    """
+    try:
+        score = grade_medium(policy=heuristic_policy, n_seeds=3)
+        return {
+            "task_id": "medium",
+            "score": round(score, 4),
+            "min": 0.0,
+            "max": 1.0,
+            "description": "3-intersection corridor with rush-hour spike",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grade/hard")
+def grade_task_hard():
+    """
+    Grader for the hard task (9-intersection grid).
+    Returns normalised score: 0.0 = random policy, 1.0 = heuristic oracle.
+    """
+    try:
+        score = grade_hard(policy=heuristic_policy, n_seeds=3)
+        return {
+            "task_id": "hard",
+            "score": round(score, 4),
+            "min": 0.0,
+            "max": 1.0,
+            "description": "3x3 grid of 9 intersections with random incidents",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Discovery endpoints ─────────────────────────────────────────────────────
 
 @app.get("/tasks")
 def tasks():
-    """
-    List all 3 tasks with descriptions and scoring info.
-    The validator checks this endpoint exists and returns at least 3 tasks.
-    """
+    """List all 3 tasks with grader paths."""
     return {
         "tasks": [
             {
                 "id": "easy",
-                "description": "Single intersection, 4 lanes, steady vehicle arrival rate",
+                "description": "Single intersection, 4 lanes, steady arrival rate",
                 "difficulty": "easy",
                 "max_steps": 100,
-                "reward_range": [-1.0, 1.0],
-                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
-                "env_vars": {"TASK_LEVEL": "easy"},
+                "grader_path": "/grade/easy",
             },
             {
                 "id": "medium",
-                "description": "3-intersection corridor with rush-hour demand spike at step 50",
+                "description": "3-intersection corridor with rush-hour spike at step 50",
                 "difficulty": "medium",
                 "max_steps": 200,
-                "reward_range": [-1.0, 1.0],
-                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
-                "env_vars": {"TASK_LEVEL": "medium"},
+                "grader_path": "/grade/medium",
             },
             {
                 "id": "hard",
-                "description": "3x3 grid of 9 intersections with random incidents and demand spikes",
+                "description": "3x3 grid of 9 intersections with random incidents",
                 "difficulty": "hard",
                 "max_steps": 300,
-                "reward_range": [-1.0, 1.0],
-                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
-                "env_vars": {"TASK_LEVEL": "hard"},
+                "grader_path": "/grade/hard",
             },
         ]
     }
 
 
-class GraderRequest(BaseModel):
-    """Request body for /grader endpoint."""
-    task_id: str           # "easy" | "medium" | "hard"
-    n_seeds: int = 3       # number of seeds to average over (default 3 for speed)
-
-
-@app.post("/grader")
-def grader(request: GraderRequest):
-    """
-    Grade a task using the built-in heuristic policy.
-    Returns a normalised score in [0.0, 1.0].
-
-    The validator calls this endpoint to confirm graders exist for all 3 tasks.
-
-    Body: {"task_id": "easy", "n_seeds": 3}
-    """
-    try:
-        task_id = request.task_id.lower()
-        n_seeds = max(1, min(request.n_seeds, 10))  # clamp between 1 and 10
-
-        if task_id == "easy":
-            score = grade_easy(policy=heuristic_policy, n_seeds=n_seeds)
-        elif task_id == "medium":
-            score = grade_medium(policy=heuristic_policy, n_seeds=n_seeds)
-        elif task_id == "hard":
-            score = grade_hard(policy=heuristic_policy, n_seeds=n_seeds)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown task_id '{task_id}'. Must be easy, medium, or hard."
-            )
-
-        return {
-            "task_id":  task_id,
-            "score":    score,
-            "min":      0.0,
-            "max":      1.0,
-            "n_seeds":  n_seeds,
-            "policy":   "heuristic",
-            "description": (
-                "Score is normalised: 0.0 = random policy, 1.0 = heuristic oracle. "
-                "Score > 0.5 means the agent is meaningfully better than random."
-            ),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/baseline")
 def baseline():
-    """
-    Run heuristic oracle baseline on all 3 tasks and return scores.
-    Provides reproducible reference scores for the submission.
-    Uses 3 seeds per task for speed (full evaluation uses 5).
-    """
+    """Run heuristic oracle on all 3 tasks. Reproducible reference scores."""
     try:
-        results = {}
-        for task_id in ["easy", "medium", "hard"]:
-            grader_fn = {"easy": grade_easy, "medium": grade_medium, "hard": grade_hard}[task_id]
-            score = grader_fn(policy=heuristic_policy, n_seeds=3)
-            results[task_id] = round(score, 4)
-
-        return {
-            "policy":  "heuristic_oracle",
-            "n_seeds": 3,
-            "scores":  results,
-            "reward_function": (
-                "reward = 0.6 * throughput_bonus + 0.4 * wait_penalty -- dense, every step"
-            ),
+        scores = {
+            "easy":   round(grade_easy(policy=heuristic_policy,   n_seeds=3), 4),
+            "medium": round(grade_medium(policy=heuristic_policy, n_seeds=3), 4),
+            "hard":   round(grade_hard(policy=heuristic_policy,   n_seeds=3), 4),
         }
+        return {"policy": "heuristic_oracle", "n_seeds": 3, "scores": scores}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Entry point (required by openenv validate) ─────────────────────────────
+# ── Entry point ─────────────────────────────────────────────────────────────
 
 def main():
-    """
-    Server entry point.
-    Called by: openenv serve, uv run server, python -m server.app
-    """
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=False)
 

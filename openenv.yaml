@@ -22,16 +22,22 @@ tasks:
     difficulty: easy
     max_steps: 100
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised against random and heuristic baselines"
+    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
+    grader:
+      path: /grade/easy
+      method: GET
     env_vars:
       TASK_LEVEL: easy
 
   - id: medium
-    description: "3-intersection urban corridor with rush-hour demand spike at step 50"
+    description: "3-intersection corridor with rush-hour demand spike at step 50"
     difficulty: medium
     max_steps: 200
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised against random and heuristic baselines"
+    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
+    grader:
+      path: /grade/medium
+      method: GET
     env_vars:
       TASK_LEVEL: medium
 
@@ -40,7 +46,10 @@ tasks:
     difficulty: hard
     max_steps: 300
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised against random and heuristic baselines"
+    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
+    grader:
+      path: /grade/hard
+      method: GET
     env_vars:
       TASK_LEVEL: hard
 
@@ -54,62 +63,31 @@ action_space:
     - name: intersection_id
       type: int
       min: 0
-      description: "0-indexed intersection to control (0 for easy, 0-2 medium, 0-8 hard)"
+      description: "0-indexed intersection to control"
 
 observation_space:
   type: structured
   fields:
     - name: intersections
       type: list
-      description: "Per-intersection state with per-lane queue lengths and wait times"
+      description: "Per-intersection sensor data: phase, elapsed, per-lane queue and wait"
     - name: total_waiting_vehicles
       type: int
-      description: "Total cars waiting across all intersections"
     - name: total_avg_wait
       type: float
       unit: seconds
-      description: "Fleet-wide average wait time"
     - name: throughput_last_step
       type: int
-      description: "Vehicles that cleared stop-lines this step"
     - name: reward
       type: float
-      description: "Step reward"
     - name: done
       type: bool
-      description: "True when episode max_steps reached"
 
 reward:
   type: dense
   range: [-1.0, 1.0]
   description: >
-    Dense reward fired at every step.
-    reward = 0.6 * throughput_bonus + 0.4 * wait_penalty
-    throughput_bonus in [0,1]: fraction of max possible vehicles cleared.
-    wait_penalty in [-1,0]: fraction of max possible waiting vehicle-seconds.
-
-endpoints:
-  - path: /health
-    method: GET
-    description: "Health check"
-  - path: /reset
-    method: POST
-    description: "Start a new episode, returns initial observation"
-  - path: /step
-    method: POST
-    description: "Apply action, returns next observation and reward"
-  - path: /state
-    method: GET
-    description: "Get current episode metadata"
-  - path: /tasks
-    method: GET
-    description: "List all 3 tasks with descriptions and scoring info"
-  - path: /grader
-    method: POST
-    description: "Grade a task by ID, returns normalised score 0.0-1.0"
-  - path: /baseline
-    method: GET
-    description: "Run heuristic oracle on all 3 tasks, returns reproducible scores"
+    reward = 0.6 * throughput_bonus + 0.4 * wait_penalty. Dense signal every step.
 
 metadata:
   author: "Anika Jain"
