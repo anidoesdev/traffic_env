@@ -1,76 +1,58 @@
 """
-server/app.py — FastAPI HTTP server.
+server/app.py -- FastAPI HTTP server.
 
-This file wraps TrafficEnvironment in a web server so any client
-(an LLM agent, a training loop, the openenv CLI) can talk to it
-over standard HTTP.
-
-Endpoints:
-  GET  /health  → {"status": "healthy"}
-  POST /reset   → TrafficObservation  (starts new episode)
-  POST /step    → TrafficObservation  (applies action, returns next obs + reward)
-  GET  /state   → TrafficState        (episode metadata)
-
-TASK_LEVEL is read from the TASK_LEVEL environment variable.
-Set it to "easy", "medium", or "hard" before starting the server.
-Default is "easy".
-
-Example:
-  TASK_LEVEL=hard uvicorn server.app:app --host 0.0.0.0 --port 7860
+Endpoints required by the hackathon validator:
+  GET  /health         health check
+  POST /reset          start new episode
+  POST /step           apply action, return observation + reward
+  GET  /state          episode metadata
+  GET  /tasks          list all tasks with descriptions  <-- REQUIRED by validator
+  POST /grader         grade a full episode for a task   <-- REQUIRED by validator
+  GET  /baseline       run heuristic on all 3 tasks      <-- REQUIRED by validator
 """
 
 import os
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
-#  Dual-import pattern ----------------------------
-# Try relative first (works in-repo with PYTHONPATH=src:envs)
-# Fall back to bare import (works inside Docker with PYTHONPATH=/app)
 try:
     from ..models import TrafficAction, TrafficObservation, TrafficState
     from .traffic_environment import TrafficEnvironment
+    from .graders import grade_easy, grade_medium, grade_hard, heuristic_policy, run_episode
 except ImportError:
     from models import TrafficAction, TrafficObservation, TrafficState
     from server.traffic_environment import TrafficEnvironment
+    from server.graders import grade_easy, grade_medium, grade_hard, heuristic_policy, run_episode
 
-# Environment setup ----------------------------
-# Read task level from environment variable (set in Docker / openenv.yaml)
 TASK_LEVEL = os.environ.get("TASK_LEVEL", "easy")
 env = TrafficEnvironment(task_level=TASK_LEVEL)
 
-#  FastAPI app ----------------------------
 app = FastAPI(
-    title="Smart City Traffic Flow — OpenEnv",
+    title="Smart City Traffic Flow -- OpenEnv",
     description=(
         "RL environment for adaptive traffic signal control. "
-        "An agent controls signal phases to minimise vehicle wait time and "
+        "Agent controls signal phases to minimise vehicle wait time and "
         "maximise throughput across urban intersections."
     ),
     version="1.0.0",
 )
 
 
-# -- Endpoints ----------------------------
+# ── Standard OpenEnv endpoints ─────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    """
-    Health check — used by Docker HEALTHCHECK and openenv validate.
-    Must return 200 with {"status": "healthy"} for the validator to pass.
-    """
+    """Health check -- openenv validate calls this first."""
     return {"status": "healthy", "task_level": TASK_LEVEL}
 
 
 @app.post("/reset", response_model=TrafficObservation)
-def reset(seed: int = None):
-    """
-    Start a fresh episode.
-    Pass ?seed=42 to get a reproducible episode.
-    Returns the initial observation (no action taken yet).
-    """
+def reset(seed: Optional[int] = None):
+    """Start a fresh episode. Pass ?seed=42 for reproducibility."""
     try:
-        obs = env.reset(seed=seed)
-        return obs
+        return env.reset(seed=seed)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -78,34 +60,152 @@ def reset(seed: int = None):
 @app.post("/step", response_model=TrafficObservation)
 def step(action: TrafficAction):
     """
-    Apply one action and advance the simulation by 5 seconds.
-    Returns the new observation including the reward for this step.
+    Apply one action, advance simulation 5 seconds, return obs + reward.
 
-    Action body example:
-        {"action_type": "extend_green", "intersection_id": 0}
-        {"action_type": "next_phase",   "intersection_id": 2}
+    Body: {"action_type": "extend_green", "intersection_id": 0}
     """
     try:
-        obs = env.step(action)
-        return obs
+        return env.step(action)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/state", response_model=TrafficState)
 def state():
-    """
-    Return episode-level metadata (step count, cumulative reward, etc.)
-    This is the OpenEnv state() method exposed over HTTP.
-    """
+    """Return episode metadata (step count, cumulative reward, etc.)"""
     try:
         return env.state
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ── Grader endpoints (REQUIRED by hackathon validator) ─────────────────────
+
+@app.get("/tasks")
+def tasks():
+    """
+    List all 3 tasks with descriptions and scoring info.
+    The validator checks this endpoint exists and returns at least 3 tasks.
+    """
+    return {
+        "tasks": [
+            {
+                "id": "easy",
+                "description": "Single intersection, 4 lanes, steady vehicle arrival rate",
+                "difficulty": "easy",
+                "max_steps": 100,
+                "reward_range": [-1.0, 1.0],
+                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
+                "env_vars": {"TASK_LEVEL": "easy"},
+            },
+            {
+                "id": "medium",
+                "description": "3-intersection corridor with rush-hour demand spike at step 50",
+                "difficulty": "medium",
+                "max_steps": 200,
+                "reward_range": [-1.0, 1.0],
+                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
+                "env_vars": {"TASK_LEVEL": "medium"},
+            },
+            {
+                "id": "hard",
+                "description": "3x3 grid of 9 intersections with random incidents and demand spikes",
+                "difficulty": "hard",
+                "max_steps": 300,
+                "reward_range": [-1.0, 1.0],
+                "scoring": "0.0-1.0 normalised against random and heuristic baselines",
+                "env_vars": {"TASK_LEVEL": "hard"},
+            },
+        ]
+    }
+
+
+class GraderRequest(BaseModel):
+    """Request body for /grader endpoint."""
+    task_id: str           # "easy" | "medium" | "hard"
+    n_seeds: int = 3       # number of seeds to average over (default 3 for speed)
+
+
+@app.post("/grader")
+def grader(request: GraderRequest):
+    """
+    Grade a task using the built-in heuristic policy.
+    Returns a normalised score in [0.0, 1.0].
+
+    The validator calls this endpoint to confirm graders exist for all 3 tasks.
+
+    Body: {"task_id": "easy", "n_seeds": 3}
+    """
+    try:
+        task_id = request.task_id.lower()
+        n_seeds = max(1, min(request.n_seeds, 10))  # clamp between 1 and 10
+
+        if task_id == "easy":
+            score = grade_easy(policy=heuristic_policy, n_seeds=n_seeds)
+        elif task_id == "medium":
+            score = grade_medium(policy=heuristic_policy, n_seeds=n_seeds)
+        elif task_id == "hard":
+            score = grade_hard(policy=heuristic_policy, n_seeds=n_seeds)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown task_id '{task_id}'. Must be easy, medium, or hard."
+            )
+
+        return {
+            "task_id":  task_id,
+            "score":    score,
+            "min":      0.0,
+            "max":      1.0,
+            "n_seeds":  n_seeds,
+            "policy":   "heuristic",
+            "description": (
+                "Score is normalised: 0.0 = random policy, 1.0 = heuristic oracle. "
+                "Score > 0.5 means the agent is meaningfully better than random."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/baseline")
+def baseline():
+    """
+    Run heuristic oracle baseline on all 3 tasks and return scores.
+    Provides reproducible reference scores for the submission.
+    Uses 3 seeds per task for speed (full evaluation uses 5).
+    """
+    try:
+        results = {}
+        for task_id in ["easy", "medium", "hard"]:
+            grader_fn = {"easy": grade_easy, "medium": grade_medium, "hard": grade_hard}[task_id]
+            score = grader_fn(policy=heuristic_policy, n_seeds=3)
+            results[task_id] = round(score, 4)
+
+        return {
+            "policy":  "heuristic_oracle",
+            "n_seeds": 3,
+            "scores":  results,
+            "reward_function": (
+                "reward = 0.6 * throughput_bonus + 0.4 * wait_penalty -- dense, every step"
+            ),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Entry point (required by openenv validate) ─────────────────────────────
+
 def main():
+    """
+    Server entry point.
+    Called by: openenv serve, uv run server, python -m server.app
+    """
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=False)
+
 
 if __name__ == "__main__":
     main()
