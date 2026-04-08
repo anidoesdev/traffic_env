@@ -22,34 +22,22 @@ tasks:
     difficulty: easy
     max_steps: 100
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
-    grader:
-      path: /grade/easy
-      method: GET
     env_vars:
       TASK_LEVEL: easy
 
   - id: medium
-    description: "3-intersection corridor with rush-hour demand spike at step 50"
+    description: "3-intersection urban corridor with rush-hour demand spike"
     difficulty: medium
     max_steps: 200
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
-    grader:
-      path: /grade/medium
-      method: GET
     env_vars:
       TASK_LEVEL: medium
 
   - id: hard
-    description: "3x3 grid of 9 intersections with random incidents and demand spikes"
+    description: "3x3 grid of 9 intersections with random incidents"
     difficulty: hard
     max_steps: 300
     reward_range: [-1.0, 1.0]
-    scoring: "0.0-1.0 normalised score: 0=random policy, 1=heuristic oracle"
-    grader:
-      path: /grade/hard
-      method: GET
     env_vars:
       TASK_LEVEL: hard
 
@@ -59,23 +47,19 @@ action_space:
     - name: action_type
       type: enum
       values: [extend_green, next_phase]
-      description: "extend_green = hold green +5s; next_phase = switch phase now"
     - name: intersection_id
       type: int
       min: 0
-      description: "0-indexed intersection to control"
 
 observation_space:
   type: structured
   fields:
     - name: intersections
       type: list
-      description: "Per-intersection sensor data: phase, elapsed, per-lane queue and wait"
     - name: total_waiting_vehicles
       type: int
     - name: total_avg_wait
       type: float
-      unit: seconds
     - name: throughput_last_step
       type: int
     - name: reward
@@ -86,8 +70,7 @@ observation_space:
 reward:
   type: dense
   range: [-1.0, 1.0]
-  description: >
-    reward = 0.6 * throughput_bonus + 0.4 * wait_penalty. Dense signal every step.
+  description: "reward = 0.6*throughput_bonus + 0.4*wait_penalty, fired every step"
 
 metadata:
   author: "Anika Jain"
