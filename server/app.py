@@ -48,6 +48,14 @@ TASK_CATALOG = [
         "difficulty": "easy",
         "max_steps": 100,
         "reward_range": [-1.0, 1.0],
+        "graders": [
+            {
+                "id": "easy_score",
+                "endpoint": "/grader",
+                "method": "POST",
+                "payload": {"task_id": "easy"},
+            }
+        ],
     },
     {
         "id": "medium",
@@ -55,6 +63,14 @@ TASK_CATALOG = [
         "difficulty": "medium",
         "max_steps": 200,
         "reward_range": [-1.0, 1.0],
+        "graders": [
+            {
+                "id": "medium_score",
+                "endpoint": "/grader",
+                "method": "POST",
+                "payload": {"task_id": "medium"},
+            }
+        ],
     },
     {
         "id": "hard",
@@ -62,6 +78,14 @@ TASK_CATALOG = [
         "difficulty": "hard",
         "max_steps": 300,
         "reward_range": [-1.0, 1.0],
+        "graders": [
+            {
+                "id": "hard_score",
+                "endpoint": "/grader",
+                "method": "POST",
+                "payload": {"task_id": "hard"},
+            }
+        ],
     },
 ]
 

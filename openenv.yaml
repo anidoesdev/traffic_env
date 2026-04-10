@@ -22,6 +22,12 @@ tasks:
     difficulty: easy
     max_steps: 100
     reward_range: [-1.0, 1.0]
+    graders:
+      - id: easy_score
+        endpoint: /grader
+        method: POST
+        payload:
+          task_id: easy
     env_vars:
       TASK_LEVEL: easy
 
@@ -30,6 +36,12 @@ tasks:
     difficulty: medium
     max_steps: 200
     reward_range: [-1.0, 1.0]
+    graders:
+      - id: medium_score
+        endpoint: /grader
+        method: POST
+        payload:
+          task_id: medium
     env_vars:
       TASK_LEVEL: medium
 
@@ -38,6 +50,12 @@ tasks:
     difficulty: hard
     max_steps: 300
     reward_range: [-1.0, 1.0]
+    graders:
+      - id: hard_score
+        endpoint: /grader
+        method: POST
+        payload:
+          task_id: hard
     env_vars:
       TASK_LEVEL: hard
 
