@@ -18,12 +18,21 @@ app:
 
 tasks:
   - id: easy
+    name: "Easy — single intersection"
     description: "Single intersection, 4 lanes, steady vehicle arrival rate"
     difficulty: easy
     max_steps: 100
     reward_range: [-1.0, 1.0]
+    grader:
+      id: easy_score
+      enabled: true
+      endpoint: /grader
+      method: POST
+      payload:
+        task_id: easy
     graders:
       - id: easy_score
+        enabled: true
         endpoint: /grader
         method: POST
         payload:
@@ -32,12 +41,21 @@ tasks:
       TASK_LEVEL: easy
 
   - id: medium
+    name: "Medium — urban corridor"
     description: "3-intersection urban corridor with rush-hour demand spike"
     difficulty: medium
     max_steps: 200
     reward_range: [-1.0, 1.0]
+    grader:
+      id: medium_score
+      enabled: true
+      endpoint: /grader
+      method: POST
+      payload:
+        task_id: medium
     graders:
       - id: medium_score
+        enabled: true
         endpoint: /grader
         method: POST
         payload:
@@ -46,12 +64,21 @@ tasks:
       TASK_LEVEL: medium
 
   - id: hard
+    name: "Hard — 3×3 grid"
     description: "3x3 grid of 9 intersections with random incidents"
     difficulty: hard
     max_steps: 300
     reward_range: [-1.0, 1.0]
+    grader:
+      id: hard_score
+      enabled: true
+      endpoint: /grader
+      method: POST
+      payload:
+        task_id: hard
     graders:
       - id: hard_score
+        enabled: true
         endpoint: /grader
         method: POST
         payload:

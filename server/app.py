@@ -6,7 +6,7 @@ Endpoints:
   POST /reset           start new episode
   POST /step            apply action, return obs + reward
   GET  /state           episode metadata
-  GET  /tasks           list all tasks (returns catalog)
+  GET  /tasks           list all tasks (JSON array; each task includes grader + graders)
   POST /grader          grade a task by task_id, return score 0.0-1.0
   GET  /baseline        run all 3 graders, return reference scores
 """
@@ -41,51 +41,50 @@ app = FastAPI(
     version="1.0.0",
 )
 
+def _grader_spec(task_id: str) -> dict:
+    """HTTP grader wiring — hub validators often expect singular `grader` + `enabled`."""
+    return {
+        "id": f"{task_id}_score",
+        "enabled": True,
+        "endpoint": "/grader",
+        "method": "POST",
+        "payload": {"task_id": task_id},
+    }
+
+
 TASK_CATALOG = [
     {
         "id": "easy",
+        "task_id": "easy",
+        "name": "Easy — single intersection",
         "description": "Single intersection, 4 lanes, steady vehicle arrival rate",
         "difficulty": "easy",
         "max_steps": 100,
         "reward_range": [-1.0, 1.0],
-        "graders": [
-            {
-                "id": "easy_score",
-                "endpoint": "/grader",
-                "method": "POST",
-                "payload": {"task_id": "easy"},
-            }
-        ],
+        "grader": _grader_spec("easy"),
+        "graders": [_grader_spec("easy")],
     },
     {
         "id": "medium",
+        "task_id": "medium",
+        "name": "Medium — urban corridor",
         "description": "3-intersection corridor with rush-hour demand spike",
         "difficulty": "medium",
         "max_steps": 200,
         "reward_range": [-1.0, 1.0],
-        "graders": [
-            {
-                "id": "medium_score",
-                "endpoint": "/grader",
-                "method": "POST",
-                "payload": {"task_id": "medium"},
-            }
-        ],
+        "grader": _grader_spec("medium"),
+        "graders": [_grader_spec("medium")],
     },
     {
         "id": "hard",
+        "task_id": "hard",
+        "name": "Hard — 3×3 grid",
         "description": "3x3 grid of 9 intersections with random incidents",
         "difficulty": "hard",
         "max_steps": 300,
         "reward_range": [-1.0, 1.0],
-        "graders": [
-            {
-                "id": "hard_score",
-                "endpoint": "/grader",
-                "method": "POST",
-                "payload": {"task_id": "hard"},
-            }
-        ],
+        "grader": _grader_spec("hard"),
+        "graders": [_grader_spec("hard")],
     },
 ]
 
@@ -123,8 +122,8 @@ def state():
 
 @app.get("/tasks")
 def tasks():
-    """Return the task catalog. Validator calls this to discover tasks."""
-    return {"tasks": TASK_CATALOG}
+    """Task catalog as a JSON array (matches Hub / hackathon examples)."""
+    return TASK_CATALOG
 
 
 # ── Grader endpoint ────────────────────────────────────────────────────────
